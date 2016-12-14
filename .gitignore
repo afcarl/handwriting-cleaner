@@ -8,3 +8,10 @@
 venv
 ENV
 
+# data
+data
+
+# python
+*.pyc
+*.pyo
+
