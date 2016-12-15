@@ -9,43 +9,38 @@ import tensorflow as tf
 import utils
 
 
-def build_tf_records_file(path, data_file):
-    """Builds a TF records file from handwriting data.
+def encode_labels_as_indices(labels, char_to_idx=None):
+    """Encodes a list of labels as incides, building an appropriate dictionary.
 
     Args:
-        path: str, path to where the records file will be stored.
-        data_file: str, the name of the Numpy data file.
+        labels: list of str, the labels to use.
+        char_to_idx: optional dict of char -> int pairs. If set, start with
+            this look-up dict instead of initializing with a new one.
+
+    Returns:
+        encoded_labels: list of Numpy arrays, the encoded labels, each with
+            shape (characters_per_label, num_characters).
+        char_to_idx: updated dictionary of char -> int pairs, the indices of
+            each character.
     """
 
-    stroke_data, label_data = utils.get_file(data_file)
-    num_examples = len(stroke_data)
+    if char_to_idx is None:
+        char_to_idx = dict()
 
-    def _int64_feature(value):
-        return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+    num_characters = len(char_to_idx)
 
-    char_to_idx = dict()
-    num_characters = 0
+    def _encode(character):
+        if character not in char_to_idx:
+            char_to_idx[character] = num_characters
+            num_characters += 1
+        return char_to_idx[character]
 
-    writer = tf.python_io.TFRecordWriter(path)
+    encoded_labels = list()
+    for label in labels:
+        as_ints = [_encode(c) for c in label]
+        encoded_labels = np.asarray(as_ints, dtype=np.int32)
 
-    for index in range(num_examples):
-
-        # Converts the label from a string to an int array.
-        label_idx = list()
-        for char in label_data[index]:
-            if char not in char_to_idx:
-                char_to_idx[char] = num_characters
-                num_characters += 1
-            label_idx.append(char_to_idx[char])
-
-        converted_label = np.asarray(label_idx, np.int32)
-
-        example = tf.train.Example(features=tf.train.Features(feature={
-            'stroke': _int64_feature(stroke_data[index]),
-            'label': _int64_feature(converted_label),
-        }))
-        writer.write(example.SerializeToString())
-    writer.close()
+    return encoded_labels, char_to_idx
 
 
 def build_seq2seq_model(strokes_tensor, lens_tensor, labels_tensor):
@@ -55,11 +50,11 @@ def build_seq2seq_model(strokes_tensor, lens_tensor, labels_tensor):
         strokes_tensor: 3D float Tensor (batch_size, num_timesteps, 3), where
             the last dimension is (X, Y, penup), the input data.
         lens_tensor: 1D int Tensor (batch_size), the length of each input
-        labels_tensor: 2D int Tensor (batch_size, num_characters), the labels
+        labels_tensor: 2D int Tensor (batch_size, label_length), the labels
             to go with the strokes, encoded by the dictionary.
     """
 
-    batch_size = strokes_tensor.get_shape()[0].value
+    batch_size, num_timesteps, _ = strokes_tensor.get_shape()
     max_timesteps = tf.reduce_max(lens_tensor)
 
     cells = [tf.nn.rnn_cell.GRUCell(128), tf.nn.rnn_cell.GRUCell(128)]
@@ -70,14 +65,24 @@ def build_seq2seq_model(strokes_tensor, lens_tensor, labels_tensor):
                                           dtype=tf.float32,
                                           scope='encoder')
 
+    with tf.name_scope('variational_loss'):
+        variational_loss = tf.constant(0., dtype=tf.float32)
+        for encoded_state in encoded_states:
+            mean, variance = tf.nn.moments(encoded_state, [1])
+            variational_loss += tf.reduce_mean(tf.square(mean))
+            variational_loss += tf.reduce_mean(tf.square(variance - 1))
+        tf.scalar_summary('loss/variational', variational_loss)
+
     with tf.variable_scope('decoder'):
         time = tf.constant(0, dtype=tf.int32)
-        outputs_array = tf.TensorArray(tf.float32, size=max_timesteps)
+        outputs_array = tf.TensorArray(tf.float32, size=num_timesteps)
         initial_stroke = tf.constant(0, tf.float32, shape=(batch_size, 3))
 
         def _decoder_step(time, prev_output, prev_rnn_states, outputs_array):
             new_output, new_rnn_states = seq_cell(prev_output, prev_rnn_states)
             new_output = utils.linear(new_output, 3)
+            new_output = tf.where(tf.greater(lens_tensor, time),
+                                  new_output, tf.zeros_like(new_output))
             outputs_array = outputs_array.write(time, new_output)
             return time + 1, new_output, new_rnn_states, outputs_array
 
@@ -87,12 +92,20 @@ def build_seq2seq_model(strokes_tensor, lens_tensor, labels_tensor):
             loop_vars=(time, initial_stroke, encoded_states, outputs_array))
 
         rnn_outputs = tf.transpose(rnn_outputs.pack(), [1, 0, 2])
-        print('RNN outputs:', rnn_outputs.get_shape())
+
+    with tf.name_scope('reconstruction_loss'):
+        reconstruction_loss = tf.square(rnn_outputs - strokes_tensor)
+        reconstruction_loss = tf.reduce_mean(reconstruction_loss)
+        tf.scalar_summary('loss/reconstruction', reconstruction_loss)
+
+    total_loss = tf.add(variational_loss, reconstruction_loss, 'total_loss')
+    tf.scalar_summary('loss/total', total_loss)
 
 
 def main():
     #     build_tf_records_file(path='/tmp/handwriting.tfrecords',
     #                           data_file='handwriting_small.pkl.gz')
+
     batch_size = 8
     num_timesteps = 1000
     num_characters = 30
