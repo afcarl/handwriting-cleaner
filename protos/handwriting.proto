@@ -1,0 +1,24 @@
+// This file defines the protocol buffers to use for interpretting the
+// handwriting data.
+
+syntax = "proto3";
+
+// A single StrokeFeature consists of an X value, a Y value, and whether
+// or not this is the first element in the stroke.
+message StrokeFeature {
+    float x = 1;
+    float y = 2;
+    bool penup = 3;
+}
+
+// Strokes are multiple StrokeFeatures.
+message Stroke {
+  repeated StrokeFeature features = 1;
+}
+
+// Labels are encoded as integers, where each int represents a single
+// character in the label.
+message Label {
+    repeated int64 value = 1 [packed = true];
+}
+
