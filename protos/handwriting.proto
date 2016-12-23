@@ -13,12 +13,18 @@ message StrokeFeature {
 
 // Strokes are multiple StrokeFeatures.
 message Stroke {
-  repeated StrokeFeature features = 1;
+    repeated StrokeFeature features = 1;
 }
 
 // Labels are encoded as integers, where each int represents a single
 // character in the label.
 message Label {
-    repeated int64 value = 1 [packed = true];
+    repeated int64 indices = 1;
+}
+
+// A single sample is a combination of a Stroke and a Label.
+message Sample {
+    Stroke stroke = 1;
+    Label label = 2;
 }
 
