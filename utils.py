@@ -243,7 +243,7 @@ def get_handwriting_arrays(data_file, num_timesteps, max_label_len):
         logging.info('File not found: %s. Creating it...', file_path)
         process_handwriting(data_file)
 
-    strokes_list, lines_list = get_file(file_path)
+    strokes_list, lines_list = get_file(data_file)
     assert len(strokes_list) == len(lines_list)
     num_samples = len(strokes_list)
 
