@@ -82,6 +82,8 @@ def main():
     model = build_seq2seq_autoencoder(args.num_timesteps)
 
     def _save_sample_callback(epoch, _):
+        """Plots the model's output on the current epoch and saves the plot."""
+
         model_preds = model.predict(eval_set)
 
         plt.figure(1)
