@@ -19,10 +19,12 @@ from __future__ import print_function
 
 import argparse
 import logging
+import os
 
 import keras
-import numpy as np
 
+import matplotlib.pyplot as plt
+import numpy as np
 import utils
 
 
@@ -40,6 +42,8 @@ def build_seq2seq_autoencoder(num_timesteps):
     conv_enc_2 = keras.layers.Convolution1D(64, 2)(conv_enc_1)
     latent_vec = keras.layers.wrappers.Bidirectional(
         keras.layers.GRU(64))(conv_enc_2)
+
+    # Batch normalization on the latent vector is probably a good idea.
     latent_vec = keras.layers.BatchNormalization(axis=1)(latent_vec)
 
     # Builds decoder part.
@@ -59,7 +63,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--num_timesteps', type=int, default=700)
     parser.add_argument('--max_label_len', type=int, default=100)
-    parser.add_argument('--logdir', type=str, default='/tmp/handwriting')
+    parser.add_argument('--logdir', type=str, default='output')
     parser.add_argument('--data_file', type=str, default='handwriting.pkl.gz')
     args = parser.parse_args()
 
@@ -72,11 +76,39 @@ def main():
 
     eps = 1e-12
     strokes = strokes / (np.linalg.norm(strokes, axis=1, keepdims=True) + eps)
+    eval_set = strokes[:5]
 
-    print(strokes.shape)
-
+    # Builds the model itself.
     model = build_seq2seq_autoencoder(args.num_timesteps)
-    model.fit(x=[strokes], y=[strokes])
+
+    def _save_sample_callback(epoch, _):
+        model_preds = model.predict(eval_set)
+
+        plt.figure(1)
+        for i in range(5):
+            plt.subplot(5, 2, 1 + 2 * i)
+            utils.plot_handwriting_sample(eval_set[i], penup_threshold=0.0)
+            plt.title('Real Sample %d' % (i + 1))
+
+            plt.subplot(5, 2, 2 + 2 * i)
+            utils.plot_handwriting_sample(model_preds[i], penup_threshold=0.0)
+            plt.title('Real Sample %d' % (i + 1))
+
+        plt.savefig(os.path.join(args.logdir, 'epoch_%d_results.png' % epoch))
+        plt.close()
+
+    callbacks = [
+        keras.callbacks.ModelCheckpoint(args.logdir,
+                                        save_best_only=True,
+                                        save_weights_only=True),
+        keras.callbacks.LambdaCallback(on_epoch_begin=_save_sample_callback),
+    ]
+
+    with open(os.path.join(args.logdir, 'model.json'), 'w') as f:
+        f.write(model.to_json())
+
+    model.fit(x=[strokes], y=[strokes], nb_epoch=100,
+              validation_split=0.2, callbacks=callbacks)
 
 
 if __name__ == '__main__':

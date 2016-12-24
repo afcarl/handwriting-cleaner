@@ -99,7 +99,6 @@ def plot_handwriting_sample(sample, penup_threshold=0.5):
 
     plt.gca().set_aspect('equal')
     plt.axis('off')
-    plt.show()
 
 
 def get_data_path():
