@@ -264,7 +264,10 @@ def get_handwriting_tensors(data_file, batch_size, num_timesteps,
     )
 
     stroke_len_tensor = context_parsed['stroke_length']
+    stroke_len_tensor = tf.minimum(stroke_len_tensor, num_timesteps)
+
     label_len_tensor = context_parsed['label_length']
+    label_len_tensor = tf.minimum(label_len_tensor, max_label_len)
 
     # Makes sure the stroke_data tensor has the correct dimensions.
     stroke_tensor = tf.sparse_tensor_to_dense(sequence_parsed['stroke'])
@@ -448,7 +451,13 @@ def process_handwriting(name='handwriting.tfrecords',
         return sample
 
     with tf.python_io.TFRecordWriter(file_path) as writer:
+        num_processed = 0
+
         for stroke_path, line_data in zip(stroke_paths, lines_encoded):
             stroke_data = _get_stroke_data(stroke_path)
             sample = _convert_to_sample(stroke_data, line_data)
             writer.write(sample.SerializeToString())
+
+            num_processed += 1
+            if num_processed % 100 == 0:
+                logging.info('Processed %d entries', num_processed)
