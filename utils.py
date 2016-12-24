@@ -92,6 +92,7 @@ def plot_handwriting_sample(sample, penup_threshold=0.5):
     import matplotlib.pyplot as plt
 
     plt.gca().invert_yaxis()
+    sample = np.copy(sample)
     sample[:, :2] = np.cumsum(sample[:, :2], axis=0)
     strokes = np.split(sample, np.where(sample[:, 2] > penup_threshold)[0][1:])
     for stroke in strokes:

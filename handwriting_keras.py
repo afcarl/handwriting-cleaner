@@ -98,7 +98,7 @@ def main():
 
             plt.subplot(5, 2, 2 + 2 * i)
             utils.plot_handwriting_sample(model_preds[i], penup_threshold=0.0)
-            plt.title('Real Sample %d' % (i + 1))
+            plt.title('Autoencoded Sample %d' % (i + 1))
 
         save_path = os.path.join(args.logdir, 'epoch_%d_results.png' % epoch)
         plt.savefig(save_path)
