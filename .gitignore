@@ -3,6 +3,7 @@
 .idea
 .project
 .pydevproject
+.DS_Store
 
 # virtualenv
 venv

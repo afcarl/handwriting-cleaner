@@ -23,6 +23,10 @@ import os
 
 import keras
 
+# Work-around for matplotlib issue on GCE.
+import matplotlib
+matplotlib.use('Agg')
+
 import matplotlib.pyplot as plt
 import numpy as np
 import utils
@@ -86,7 +90,7 @@ def main():
 
         model_preds = model.predict(eval_set)
 
-        plt.figure(1)
+        plt.figure()
         for i in range(5):
             plt.subplot(5, 2, 1 + 2 * i)
             utils.plot_handwriting_sample(eval_set[i], penup_threshold=0.0)
