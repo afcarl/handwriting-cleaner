@@ -1,4 +1,4 @@
-"""Trains and evaluates handwriting model."""
+"""Trains and evaluates TF handwriting model."""
 
 from __future__ import absolute_import
 from __future__ import division

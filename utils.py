@@ -20,7 +20,7 @@ import xml.etree.cElementTree as et
 
 _MNIST_URL = 'https://s3.amazonaws.com/img-datasets/mnist.pkl.gz'
 _HANDWRITING_URL = ('http://www.fki.inf.unibe.ch/databases/'
-                    'iam-on-line-handwriting-database')
+                    'iam-on-line-handwriting_tf-database')
 
 
 def linear(input_tensor, output_dims, activation=tf.tanh):
@@ -75,7 +75,7 @@ def linear(input_tensor, output_dims, activation=tf.tanh):
 
 
 def plot_handwriting_sample(sample, penup_threshold=0.5):
-    """Plots a handwriting sample provided as a Numpy array.
+    """Plots a handwriting_tf sample provided as a Numpy array.
 
     Args:
         sample: 2D Numpy array with shape (num_timesteps, 3), where the last
@@ -216,6 +216,50 @@ def pad_to_len(sequence, target_length):
     return sequence_padded
 
 
+def get_handwriting_arrays(data_file, num_timesteps, max_label_len):
+    """Gets the input data as Numpy arrays.
+
+    Args:
+        data_file: str, the name of the input data file.
+        num_timesteps: int, number of timesteps in the input.
+        max_label_len: int, maximum number of characters in the label.
+
+    Returns:
+        strokes_array: 3D Numpy arrays with shape (num_samples, num_timesteps,
+            3) with zero padding to get to num_timesteps.
+        lines_array: 2D Numpy arrays with shape (num_samples, max_label_len)
+            with zero padding to get to max_label_len.
+
+    Raises:
+        ValueError: if the data file has the wrong format.
+    """
+
+    if data_file.endswith('.tfrecords'):
+        raise ValueError('Cannot use a TFRecords file for this. Got: %s'
+                         % data_file)
+
+    file_path = os.path.join(get_data_path(), data_file)
+
+    if not os.path.exists(file_path):
+        logging.info('File not found: %s. Creating it...', file_path)
+        process_handwriting(data_file)
+
+    strokes_list, lines_list = get_file(file_path)
+    assert len(strokes_list) == len(lines_list)
+    num_samples = len(strokes_list)
+
+    strokes_array = np.zeros((num_samples, num_timesteps, 3), dtype=np.float32)
+    lines_array = np.zeros((num_samples, max_label_len), dtype=np.int32)
+
+    for i, (strokes, lines) in enumerate(zip(strokes_list, lines_list)):
+        strokes = strokes[:num_timesteps]
+        lines = lines[:max_label_len]
+        strokes_array[i, :strokes.shape[0], :] = strokes
+        lines_array[i, :lines.shape[0]] = lines
+
+    return strokes_array, lines_array
+
+
 def get_handwriting_tensors(data_file, batch_size, num_timesteps,
                             max_label_len):
     """Takes some input data and creates an input tensor with it.
@@ -235,13 +279,20 @@ def get_handwriting_tensors(data_file, batch_size, num_timesteps,
             labels (where each index represents a single character).
         label_len_tensor: 1D int Tensor (batch_size), the length of each label
             in the batch.
+
+    Raises:
+        ValueError: if the data file has the wrong format.
     """
+
+    if not data_file.endswith('.tfrecords'):
+        raise ValueError('The data file must be a TFRecords file. Got: %s'
+                         % data_file)
 
     file_path = os.path.join(get_data_path(), data_file)
 
     if not os.path.exists(file_path):
         logging.info('File not found: %s. Creating it...', file_path)
-        process_handwriting(name=data_file)
+        process_handwriting(data_file)
 
     filename_queue = tf.train.string_input_producer(
         [file_path], num_epochs=None)
@@ -314,22 +365,22 @@ def encode_handwriting_labels_as_indices(labels):
     return encoded_labels, char_to_idx
 
 
-def process_handwriting(name='handwriting.tfrecords',
+def process_handwriting(name,
                         dict_name='handwriting_dict.pkl.gz',
                         stroke_dir='data/lineStrokes',
                         label_dir='data/ascii',
                         num_samples=None):
-    """Converts online handwriting data to a Numpy arrays, and saves them.
+    """Converts online handwriting_tf data to a Numpy arrays, and saves them.
 
-    The handwriting data can be downloaded by first registering an account here:
-    http://www.fki.inf.unibe.ch/databases/iam-on-line-handwriting-database
+    The handwriting_tf data can be downloaded by first registering an account here:
+    http://www.fki.inf.unibe.ch/databases/iam-on-line-handwriting_tf-database
 
     In particular, you should download data/lineStrokes-all.tar.gz and
     data/ascii-all.tar.gz, then extract them to stroke_dir and label_dir
     respectively.
 
-    The strokes and labels are saved as handwriting proto objects. See
-    protos/handwriting.proto for the specific format. The TFRecords file that
+    The strokes and labels are saved as handwriting_tf proto objects. See
+    protos/handwriting_tf.proto for the specific format. The TFRecords file that
     contains them can then be accessed using get_handwriting_input_tensors.
 
     Args:
@@ -450,14 +501,18 @@ def process_handwriting(name='handwriting.tfrecords',
 
         return sample
 
-    with tf.python_io.TFRecordWriter(file_path) as writer:
-        num_processed = 0
+    if file_path.endswith('.tfrecords'):
+        with tf.python_io.TFRecordWriter(file_path) as writer:
+            num_processed = 0
 
-        for stroke_path, line_data in zip(stroke_paths, lines_encoded):
-            stroke_data = _get_stroke_data(stroke_path)
-            sample = _convert_to_sample(stroke_data, line_data)
-            writer.write(sample.SerializeToString())
+            for stroke_path, line_data in zip(stroke_paths, lines_encoded):
+                stroke_data = _get_stroke_data(stroke_path)
+                sample = _convert_to_sample(stroke_data, line_data)
+                writer.write(sample.SerializeToString())
 
-            num_processed += 1
-            if num_processed % 100 == 0:
-                logging.info('Processed %d entries', num_processed)
+                num_processed += 1
+                if num_processed % 100 == 0:
+                    logging.info('Processed %d entries', num_processed)
+    else:
+        stroke_data = [_get_stroke_data(p) for p in stroke_paths]
+        dump_file(name, (stroke_data, lines_encoded))
