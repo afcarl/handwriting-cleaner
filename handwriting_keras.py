@@ -106,8 +106,10 @@ def main():
 
         logging.info('Saved to "%s"' % save_path)
 
+    model_save_loc = os.path.join(args.logdir, 'weights.hdf5')
+
     callbacks = [
-        keras.callbacks.ModelCheckpoint(args.logdir,
+        keras.callbacks.ModelCheckpoint(model_save_loc,
                                         save_best_only=True,
                                         save_weights_only=True),
         keras.callbacks.LambdaCallback(on_epoch_begin=_save_sample_callback),
