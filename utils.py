@@ -6,12 +6,12 @@ from __future__ import print_function
 
 import gzip
 import itertools
+import logging
 import os
 import re
 
 import requests
 
-import matplotlib.pyplot as plt
 import numpy as np
 import six.moves.cPickle as pkl
 import tensorflow as tf
@@ -87,6 +87,10 @@ def plot_handwriting_sample(sample, penup_threshold=0.5):
             threshold that point is considered the start of a new stroke.
     """
 
+    # The import is done here because of an issue with iOS virtual
+    # environments.
+    import matplotlib.pyplot as plt
+
     plt.gca().invert_yaxis()
     sample[:, :2] = np.cumsum(sample[:, :2], axis=0)
     strokes = np.split(sample, np.where(sample[:, 2] > penup_threshold)[0][1:])
@@ -98,7 +102,7 @@ def plot_handwriting_sample(sample, penup_threshold=0.5):
     plt.show()
 
 
-def _get_data_path():
+def get_data_path():
     """Helper method for getting the data path in a user-friendly way."""
 
     if 'DATA_PATH' not in os.environ:
@@ -117,17 +121,17 @@ def get_file(name):
     """Generic utility for loading datasets.
 
     Args:
-        name: str, the name of the file (e.g. mnist.pkl.gz) in the directory
-            specified by "path". If the name ends in .gz, it is interpretted
-            as a gzipped file.
+        name: str, the name of the file (e.g. mnist.pkl.gz) in the environment
+            data path. If the name ends in .gz, it is interpretted
+            as a gzipped file. If it ends in .tfrecords, it is interpretted as
+            a tfrecords file.
 
     Returns:
         The loaded data. For exmaple, the MNIST data consists of two Numpy
             arrays.
     """
 
-    path = _get_data_path()
-    file_path = os.path.join(path, name)
+    file_path = os.path.join(get_data_path(), name)
 
     if not os.path.exists(file_path):
         raise ValueError('No file found at %s. Use the scripts in utils.py '
@@ -143,6 +147,26 @@ def get_file(name):
     return data
 
 
+def dump_file(name, obj):
+    """Generic utility for saving datasets.
+
+    Args:
+        name: str, the name of the file in the environment data path. IF the
+            file name ends in .gz, it is interpretted as a gzipped file.
+        obj: the object to dump.
+    """
+
+    path = get_data_path()
+    file_path = os.path.join(path, name)
+
+    if file_path.endswith('.gz'):
+        with gzip.open(file_path, 'wb') as f:
+            pkl.dump(obj, f)
+    else:
+        with open(file_path, 'w') as f:
+            pkl.dump(obj, f)
+
+
 def download_mnist(name='mnist.pkl.gz'):
     """Downloads and saves MNIST data in the data directory.
 
@@ -150,7 +174,7 @@ def download_mnist(name='mnist.pkl.gz'):
         name: str, what name to save the MNIST data under.
     """
 
-    path = _get_data_path()
+    path = get_data_path()
     file_path = os.path.join(path, name)
 
     if os.path.exists(file_path):
@@ -162,7 +186,133 @@ def download_mnist(name='mnist.pkl.gz'):
             f.write(data)
 
 
-def process_handwriting(name='handwriting.pkl.gz',
+def pad_to_len(sequence, target_length):
+    """Pads the given sequence to the specified length.
+
+    Args:
+        sequence: N-D Tensor with shape (?, a1, a2...), the sequence to add
+            padding. The first dimension should be the "length" dimension.
+        target_length: int, the desired length to pad to.
+
+    Returns:
+        sequence_padded: N-D Tensor with shape (target_length, a1, a2...), the
+            sequence padded with zeros at the end.
+    """
+
+    sequence_shape = sequence.get_shape().as_list()
+    target_shape = [target_length] + list(sequence_shape[1:])
+
+    if any(dim is None for dim in target_shape):
+        raise ValueError('Invalid input sequence: All the dimensions except '
+                         'the first one should be defined (got target shape '
+                         '%s)' % target_shape)
+
+    num_elements = reduce(lambda x, y: x * y, target_shape)
+    as_vector = tf.reshape(sequence[:target_length], [-1])
+    pad = tf.zeros([num_elements] - tf.shape(as_vector), dtype=sequence.dtype)
+    vector_padded = tf.concat(0, [as_vector, pad])
+    sequence_padded = tf.reshape(vector_padded, target_shape)
+
+    return sequence_padded
+
+
+def get_handwriting_tensors(data_file, batch_size, num_timesteps,
+                            max_label_len):
+    """Takes some input data and creates an input tensor with it.
+
+    Args:
+        data_file: str, the name of the input data file.
+        batch_size: int, the size of a batch.
+        num_timesteps: int, number of timesteps in the input.
+        max_label_len: int, maximum number of characters in the label.
+
+    Returns:
+        strokes_tensor: 3D float Tensor (batch_size, num_timesteps, 3),
+            the stroke deltas.
+        stroke_len_tensor: 1D int Tensor (batch_size), the length of each
+            stroke in the batch.
+        label_tensor: 2D int Tensor (batch_size, label_len), the index-encoded
+            labels (where each index represents a single character).
+        label_len_tensor: 1D int Tensor (batch_size), the length of each label
+            in the batch.
+    """
+
+    file_path = os.path.join(get_data_path(), data_file)
+
+    if not os.path.exists(file_path):
+        logging.info('File not found: %s. Creating it...', file_path)
+        process_handwriting(name=data_file, num_samples=5)
+
+    filename_queue = tf.train.string_input_producer(
+        [file_path], num_epochs=None)
+    reader = tf.TFRecordReader()
+    _, serialized_example = reader.read(filename_queue)
+
+    context_features = {
+        'stroke_length': tf.FixedLenFeature([], dtype=tf.int64),
+        'label_length': tf.FixedLenFeature([], dtype=tf.int64),
+    }
+    sequence_features = {
+        'stroke': tf.VarLenFeature(dtype=tf.int64),
+        'label': tf.VarLenFeature(dtype=tf.int64),
+    }
+
+    context_parsed, sequence_parsed = tf.parse_single_sequence_example(
+        serialized=serialized_example,
+        context_features=context_features,
+        sequence_features=sequence_features,
+    )
+
+    stroke_len_tensor = context_parsed['stroke_length']
+    label_len_tensor = context_parsed['label_length']
+
+    # Makes sure the stroke_data tensor has the correct dimensions.
+    stroke_tensor = tf.sparse_tensor_to_dense(sequence_parsed['stroke'])
+    stroke_tensor = tf.transpose(stroke_tensor, (1, 0))
+    stroke_tensor = tf.reshape(stroke_tensor, (-1, 3))
+    stroke_tensor = pad_to_len(stroke_tensor, num_timesteps)
+
+    # Makes sure the label_data tensor has the correct dimensions.
+    label_tensor = tf.sparse_tensor_to_dense(sequence_parsed['label'])
+    label_tensor = tf.reshape(label_tensor, (-1,))
+    label_tensor = pad_to_len(label_tensor, max_label_len)
+
+    # Adds batch part.
+    (stroke_tensor, stroke_len_tensor, label_tensor,
+     label_len_tensor) = tf.train.shuffle_batch(
+        [stroke_tensor, stroke_len_tensor, label_tensor, label_len_tensor],
+        batch_size=batch_size,
+        capacity=2000,
+        min_after_dequeue=1000)
+
+    return stroke_tensor, stroke_len_tensor, label_tensor, label_len_tensor
+
+
+def encode_handwriting_labels_as_indices(labels):
+    """Encodes a list of labels as incides, building an appropriate dictionary.
+
+    Args:
+        labels: list of str, the labels to use.
+
+    Returns:
+        encoded_labels: list of Numpy arrays, the encoded labels, each with
+            shape (characters_per_label, num_characters).
+        char_to_idx: dictionary of char -> int pairs, the indices of each
+            character.
+    """
+
+    all_chars = set((c for label in labels for c in label))
+    char_to_idx = dict((c, i) for i, c in enumerate(all_chars))
+
+    def _get_numpy_array(label):
+        return np.asarray([char_to_idx[c] for c in label], dtype=np.int32)
+
+    encoded_labels = [_get_numpy_array(label) for label in labels]
+    return encoded_labels, char_to_idx
+
+
+def process_handwriting(name='handwriting.tfrecords',
+                        dict_name='handwriting_dict.pkl.gz',
                         stroke_dir='data/lineStrokes',
                         label_dir='data/ascii',
                         num_samples=None):
@@ -175,13 +325,13 @@ def process_handwriting(name='handwriting.pkl.gz',
     data/ascii-all.tar.gz, then extract them to stroke_dir and label_dir
     respectively.
 
-    The stroke data is encoded as a Numpy array with dimensions (num_samples,
-    sample_len, 3). The last dimension consists of (X, Y, penup), where X and Y
-    are the deltas (how much the pen location changed from the previous step)
-    and penup is 1 if is the start of a new stroke and 0 otherwise.
+    The strokes and labels are saved as handwriting proto objects. See
+    protos/handwriting.proto for the specific format. The TFRecords file that
+    contains them can then be accessed using get_handwriting_input_tensors.
 
     Args:
         name: str, where to save the resulting file.
+        dict_name: str, where to save the idx_to_char dictionary.
         stroke_dir: str, the path to the "lineStrokes" stroke data.
         label_dir: str, the path to the "ascii" labels data.
         num_samples: int, if specified, only process this many samples.
@@ -203,6 +353,17 @@ def process_handwriting(name='handwriting.pkl.gz',
                          'the directory.' % (label_dir, _HANDWRITING_URL))
 
     def _get_stroke_data(stroke_path):
+        """Parses the stroke data from the provided XML file.
+
+        Args:
+            stroke_path: str, the path to the XML file containing the stroke
+                data.
+
+        Returns:
+            data: Numpy float array with shape (num_timesteps, 3), the data in
+                the XML file as a Numpy array.
+        """
+
         xml = et.parse(stroke_path)
         data = list()
         for stroke in xml.iter('Stroke'):
@@ -214,6 +375,14 @@ def process_handwriting(name='handwriting.pkl.gz',
         return data
 
     def _iter_strokes_and_lines():
+        """Iterates through stroke and line data.
+
+        Yields:
+            stroke_path: str, the path to the file containing the data for the
+                current stroke.
+            line: str, the label for the current stroke.
+        """
+
         for root, _, files in os.walk(label_dir):
             for file_name in files:
                 file_path = os.path.join(root, file_name)
@@ -239,18 +408,47 @@ def process_handwriting(name='handwriting.pkl.gz',
     if num_samples is not None:
         iterable = itertools.islice(iterable, num_samples)
 
-    stroke_line_pairs = list()
-    for stroke_path, line in iterable:
-        stroke_data = _get_stroke_data(stroke_path)
-        stroke_line_pairs.append((stroke_data, line))
+    # Gets the stroke paths and lines separately, then turns the lines into
+    # Numpy arrays, saving the lookup dictionary to dict_name.
+    stroke_paths, lines = zip(*iterable)
+    lines_encoded, char_to_idx = encode_handwriting_labels_as_indices(lines)
+    idx_to_char = dict((i, c) for c, i in char_to_idx.items())
+    dump_file(dict_name, idx_to_char)
 
-    strokes, lines = zip(*stroke_line_pairs)
+    file_path = os.path.join(get_data_path(), name)
 
-    path = _get_data_path()
-    file_path = os.path.join(path, name)
-    if file_path.endswith('.gz'):
-        with gzip.open(file_path, 'w') as f:
-            pkl.dump((strokes, lines), f)
-    else:
-        with open(file_path, 'w') as f:
-            pkl.dump((strokes, lines), f)
+    def _convert_to_sample(stroke_data, line_data):
+        """Converts stroke and line data to a proto object."""
+
+        stroke_len = tf.train.Int64List(value=[len(stroke_data)])
+        label_len = tf.train.Int64List(value=[len(line_data)])
+        x = tf.train.Int64List(value=stroke_data[:, 0].tolist())
+        y = tf.train.Int64List(value=stroke_data[:, 1].tolist())
+        penup = tf.train.Int64List(value=stroke_data[:, 2].tolist())
+        label = tf.train.Int64List(value=line_data.tolist())
+
+        sample = tf.train.SequenceExample(
+            context=tf.train.Features(
+                feature={
+                    'stroke_length': tf.train.Feature(int64_list=stroke_len),
+                    'label_length': tf.train.Feature(int64_list=label_len),
+                }),
+            feature_lists=tf.train.FeatureLists(
+                feature_list={
+                    'stroke': tf.train.FeatureList(feature=[
+                        tf.train.Feature(int64_list=x),
+                        tf.train.Feature(int64_list=y),
+                        tf.train.Feature(int64_list=penup),
+                    ]),
+                    'label': tf.train.FeatureList(feature=[
+                        tf.train.Feature(int64_list=label)
+                    ])
+                }))
+
+        return sample
+
+    with tf.python_io.TFRecordWriter(file_path) as writer:
+        for stroke_path, line_data in zip(stroke_paths, lines_encoded):
+            stroke_data = _get_stroke_data(stroke_path)
+            sample = _convert_to_sample(stroke_data, line_data)
+            writer.write(sample.SerializeToString())
