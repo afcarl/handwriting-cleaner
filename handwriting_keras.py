@@ -107,12 +107,14 @@ def main():
         logging.info('Saved to "%s"' % save_path)
 
     model_save_loc = os.path.join(args.logdir, 'weights.hdf5')
+    csv_save_loc = os.path.join(args.logdir, 'training.log')
 
     callbacks = [
         keras.callbacks.ModelCheckpoint(model_save_loc,
                                         save_best_only=True,
                                         save_weights_only=True),
         keras.callbacks.LambdaCallback(on_epoch_begin=_save_sample_callback),
+        keras.callbacks.CSVLogger(csv_save_loc),
     ]
 
     with open(os.path.join(args.logdir, 'model.json'), 'w') as f:
