@@ -241,7 +241,7 @@ def get_handwriting_tensors(data_file, batch_size, num_timesteps,
 
     if not os.path.exists(file_path):
         logging.info('File not found: %s. Creating it...', file_path)
-        process_handwriting(name=data_file, num_samples=5)
+        process_handwriting(name=data_file)
 
     filename_queue = tf.train.string_input_producer(
         [file_path], num_epochs=None)
