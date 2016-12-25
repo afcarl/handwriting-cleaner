@@ -74,7 +74,7 @@ def linear(input_tensor, output_dims, activation=tf.tanh):
     return output_tensor
 
 
-def plot_handwriting_sample(sample, penup_threshold=0.5):
+def plot_handwriting_sample(sample, penup_threshold=0.5, delta_ratio=5):
     """Plots a handwriting_tf sample provided as a Numpy array.
 
     Args:
@@ -85,6 +85,7 @@ def plot_handwriting_sample(sample, penup_threshold=0.5):
             stroke.
         penup_threshold: float, if the penup feature is greater than this
             threshold that point is considered the start of a new stroke.
+        delta_ratio: float, the amount to increase the deltas.
     """
 
     # The import is done here because of an issue with iOS virtual
@@ -93,10 +94,10 @@ def plot_handwriting_sample(sample, penup_threshold=0.5):
 
     plt.gca().invert_yaxis()
     sample = np.copy(sample)
-    sample[:, :2] = np.cumsum(sample[:, :2], axis=0)
+    sample[:, :2] = np.cumsum(sample[:, :2], axis=0) * delta_ratio
     strokes = np.split(sample, np.where(sample[:, 2] > penup_threshold)[0][1:])
     for stroke in strokes:
-        plt.plot(stroke[:, 0], stroke[:, 1])
+        plt.plot(stroke[:, 0], stroke[:, 1], '.-', ms=2)
 
     plt.gca().set_aspect('equal')
     plt.axis('off')

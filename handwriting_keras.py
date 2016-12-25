@@ -84,7 +84,7 @@ def main():
 
     eps = 1e-12
     strokes = strokes / (np.linalg.norm(strokes, axis=1, keepdims=True) + eps)
-    eval_set = strokes[:5]
+    eval_set = strokes[:2]
 
     # Builds the model itself.
     model = build_seq2seq_autoencoder(args.num_timesteps)
@@ -94,18 +94,19 @@ def main():
 
         model_preds = model.predict(eval_set)
 
-        plt.figure()
-        for i in range(5):
-            plt.subplot(5, 2, 1 + 2 * i)
+        plt.figure(dpi=80)
+        num_images = eval_set.shape[0]
+        for i in range(num_images):
+            plt.subplot(num_images * 2, 1, 1 + 2 * i)
             utils.plot_handwriting_sample(eval_set[i], penup_threshold=0.0)
             plt.title('Real Sample %d' % (i + 1))
 
-            plt.subplot(5, 2, 2 + 2 * i)
+            plt.subplot(num_images * 2, 1, 2 + 2 * i)
             utils.plot_handwriting_sample(model_preds[i], penup_threshold=0.0)
             plt.title('Autoencoded Sample %d' % (i + 1))
 
         save_path = os.path.join(args.logdir, 'epoch_%d_results.png' % epoch)
-        plt.savefig(save_path)
+        plt.savefig(save_path, dpi=240)
         plt.close()
 
         logging.info('Saved to "%s"' % save_path)
