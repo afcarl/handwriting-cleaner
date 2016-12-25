@@ -43,12 +43,11 @@ def build_seq2seq_autoencoder(num_timesteps):
     input_d = keras.layers.TimeDistributed(keras.layers.Dense(256))(input_var)
 
     # Builds encoder part.
-    rnn_1 = keras.layers.wrappers.Bidirectional(
-        keras.layers.GRU(128, return_sequences=True))
-    rnn_2 = keras.layers.wrappers.Bidirectional(
-        keras.layers.GRU(128, return_sequences=True))
-
-    latent_vec = keras.layers.GlobalAveragePooling1D()(rnn_2(rnn_1(input_d)))
+    rnn_enc_1 = keras.layers.wrappers.Bidirectional(
+        keras.layers.GRU(128, return_sequences=True))(input_var)
+    rnn_enc_2 = keras.layers.wrappers.Bidirectional(
+        keras.layers.GRU(128, return_sequences=True))(rnn_enc_1)
+    latent_vec = keras.layers.GlobalAveragePooling1D()(rnn_enc_2)
 
     # Batch normalization on the latent vector is probably a good idea.
     latent_vec = keras.layers.BatchNormalization(axis=1)(latent_vec)
@@ -56,10 +55,12 @@ def build_seq2seq_autoencoder(num_timesteps):
     # Builds decoder part.
     repeated_vec = keras.layers.RepeatVector(num_timesteps)(latent_vec)
 
-    output_var = rnn_1(rnn_2(repeated_vec))
+    rnn_dec_1 = keras.layers.wrappers.Bidirectional(
+        keras.layers.GRU(128, return_sequences=True))(repeated_vec)
+    rnn_dec_2 = keras.layers.wrappers.Bidirectional(
+        keras.layers.GRU(128, return_sequences=True))(rnn_dec_1)
     output_var = keras.layers.TimeDistributed(
-        keras.layers.Dense(3))(output_var)
-    output_var = keras.layers.Activation('tanh')(output_var)
+        keras.layers.Dense(3))(rnn_dec_2)
 
     model = keras.models.Model(input=[input_var], output=[output_var])
     model.compile(loss='mse', optimizer='rmsprop')
@@ -126,7 +127,7 @@ def main():
         f.write(model.to_json())
 
     model.fit(x=[strokes], y=[strokes], nb_epoch=100,
-              validation_split=0.2, callbacks=callbacks)
+              validation_split=0.05, callbacks=callbacks)
 
 
 if __name__ == '__main__':
